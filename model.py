@@ -201,3 +201,68 @@ class MHCBlock(nn.Module):
 
         return X_next
 
+# Step 6 - signal_norm_across_depth
+def signal_norm_across_depth(
+    n_layers,
+    d_model,
+    n_hc,
+    constrained,
+    res_noise,
+    seed,
+    n_tokens=8
+):
+    # Make the experiment reproducible.
+    torch.manual_seed(seed)
+
+    blocks = []
+
+    # Construct each block and perturb its static residual map.
+    for _ in range(n_layers):
+        block = MHCBlock(
+            d_model,
+            n_hc,
+            nn.Tanh(),
+            constrained=constrained
+        )
+
+        # Model drift away from the identity residual map.
+        with torch.no_grad():
+            block.gen.static_res.add_(
+                res_noise * torch.randn(n_hc, n_hc)
+            )
+
+        blocks.append(block)
+
+    # Initialize the residual state with identical hyper-connection streams.
+    X = expand_residual(
+        torch.randn(n_tokens, d_model),
+        n_hc
+    )
+
+    rms_history = []
+    spec_history = []
+
+    # Measure signal propagation without tracking gradients.
+    with torch.no_grad():
+        for block in blocks:
+            # Obtain the residual mixing matrices for the current input.
+            _, B, _ = block.mappings(X)
+
+            # Record the largest spectral norm across all tokens.
+            spectral_norms = torch.linalg.matrix_norm(B, ord=2)
+            spec = spectral_norms.max().item()
+
+            # Propagate the residual state through the mHC block.
+            X = block(X)
+
+            # Record the global RMS of the updated residual state.
+            rms = torch.sqrt(torch.mean(X ** 2)).item()
+
+            rms_history.append(round(float(rms), 4))
+            spec_history.append(round(float(spec), 4))
+
+    return {
+        "rms": rms_history,
+        "spec": spec_history
+    }
+

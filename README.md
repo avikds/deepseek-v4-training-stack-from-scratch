@@ -15,6 +15,7 @@ python scaffold.py
 - [x] **3.** HCParamGenerator
 - [x] **4.** sinkhorn_knopp
 - [x] **5.** MHCBlock
+- [x] **6.** signal_norm_across_depth
 
 ---
 
