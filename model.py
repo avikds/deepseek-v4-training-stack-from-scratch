@@ -550,3 +550,14 @@ def sequence_balance_loss(scores, indices, k):
     # Sequence-wise balance loss: sum_i f_i * P_i.
     return torch.sum(f * P)
 
+# Step 14 - hash_route
+def hash_route(token_ids, n_experts, k):
+    # Create expert offsets: [0, 1, ..., k-1].
+    offsets = torch.arange(k, device=token_ids.device)
+
+    # Assign each token to k consecutive experts using its token ID.
+    # Output shape: (..., k).
+    indices = (token_ids.unsqueeze(-1) + offsets) % n_experts
+
+    return indices.long()
+
