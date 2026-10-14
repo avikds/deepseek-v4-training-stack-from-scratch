@@ -30,6 +30,7 @@ python scaffold.py
 - [x] **18.** fp4_e2m1_quantize
 - [x] **19.** mxfp4_fake_quant
 - [x] **20.** fp8_fake_quant
+- [x] **21.** MTPModule
 
 ---
 

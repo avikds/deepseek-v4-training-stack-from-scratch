@@ -878,3 +878,27 @@ def fp8_fake_quant(w, block=128):
     # identity gradient with respect to the original weights.
     return w + (quantized - w).detach()
 
+# Step 21 - MTPModule
+class MTPModule(nn.Module):
+    def __init__(self, d_model, block):
+        super().__init__()
+        self.norm_h = RMSNorm(d_model)
+        self.norm_e = RMSNorm(d_model)
+        self.proj = nn.Linear(2 * d_model, d_model, bias=False)
+        self.block = block
+
+    def forward(self, h, tokens, embed):
+        T = h.shape[1]
+
+        h_prev = self.norm_h(h[:, :T - 2])
+        e_next = self.norm_e(embed(tokens[:, 1:T - 1]))
+
+        combined = torch.cat([h_prev, e_next], dim=-1)
+        x = self.proj(combined)
+
+        result = self.block(x)
+        if isinstance(result, tuple):
+            result = result[0]
+
+        return result
+
