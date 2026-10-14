@@ -33,6 +33,7 @@ python scaffold.py
 - [x] **21.** MTPModule
 - [x] **22.** mtp_loss
 - [x] **23.** CausalAttention
+- [x] **24.** TinyV4Decoder
 
 ---
 

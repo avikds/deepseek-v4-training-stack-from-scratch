@@ -950,3 +950,85 @@ class CausalAttention(nn.Module):
         )
         return self.out(merged)
 
+# Step 24 - TinyV4Decoder
+class TinyV4Decoder(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+
+        vocab = cfg["vocab"]
+        d_model = cfg["d_model"]
+        n_layers = cfg["n_layers"]
+        n_heads = cfg["n_heads"]
+        d_ff = cfg["d_ff"]
+        n_experts = cfg["n_experts"]
+        k = cfg["k"]
+        n_hc = cfg["n_hc"]
+        hash_layers = cfg["hash_layers"]
+        sinkhorn_iters = cfg["sinkhorn_iters"]
+        constrained = cfg["constrained"]
+        clamp = cfg["clamp"]
+
+        self.embed = nn.Embedding(vocab, d_model)
+        self.blocks = nn.ModuleList()
+
+        for i in range(n_layers):
+            attention = CausalAttention(d_model, n_heads)
+            self.blocks.append(
+                MHCBlock(
+                    d_model, n_hc, attention,
+                    constrained=constrained,
+                    sinkhorn_iters=sinkhorn_iters
+                )
+            )
+
+            moe = MoELayer(
+                d_model, d_ff, n_experts, k,
+                hash_routing=(i < hash_layers),
+                clamp=clamp
+            )
+            self.blocks.append(
+                MHCBlock(
+                    d_model, n_hc, moe,
+                    constrained=constrained,
+                    sinkhorn_iters=sinkhorn_iters
+                )
+            )
+
+        self.final_norm = RMSNorm(d_model)
+        self.head = nn.Linear(d_model, vocab, bias=False)
+
+        if cfg["mtp"]:
+            self.mtp = MTPModule(
+                d_model,
+                nn.Sequential(
+                    RMSNorm(d_model),
+                    nn.Linear(d_model, d_model, bias=False)
+                )
+            )
+        else:
+            self.mtp = None
+
+    def forward(self, tokens, routing_plan=None):
+        x = expand_residual(self.embed(tokens), self.cfg["n_hc"])
+        infos = []
+        moe_index = 0
+
+        for block_index, block in enumerate(self.blocks):
+            is_moe_block = (block_index % 2 == 1)
+
+            if is_moe_block:
+                kwargs = {"token_ids": tokens}
+
+                if routing_plan is not None:
+                    kwargs["indices"] = routing_plan[moe_index]
+
+                x, info = block(x, **kwargs)
+                infos.append(info)
+                moe_index += 1
+            else:
+                x = block(x)
+
+        h = self.final_norm(collapse_residual(x))
+        return h, infos
+
