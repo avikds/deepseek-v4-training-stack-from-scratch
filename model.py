@@ -837,3 +837,44 @@ def mxfp4_fake_quant(w, block=32):
     # identity gradient with respect to the original weights.
     return w + (quantized - w).detach()
 
+# Step 20 - fp8_fake_quant
+def fp8_e4m3_quantize(x):
+    # Work with magnitudes and clip to the maximum finite E4M3 value.
+    magnitude = x.abs().clamp(max=448.0)
+
+    # Avoid log2(0); zero values are restored correctly at the end.
+    safe_magnitude = magnitude.clamp(min=1e-12)
+
+    # Compute the exponent, with -6 as the minimum exponent.
+    exponent = torch.floor(torch.log2(safe_magnitude)).clamp(min=-6.0)
+
+    # E4M3 has three mantissa bits, so the quantization step is 2^(e-3).
+    step = torch.pow(2.0, exponent - 3.0)
+
+    # Round to the nearest representable multiple of the step.
+    quantized_magnitude = torch.round(magnitude / step) * step
+
+    # Restore the sign and preserve the input dtype and shape.
+    return torch.sign(x) * quantized_magnitude
+
+
+def fp8_fake_quant(w, block=128):
+    # Perform scaling and quantization using detached weights.
+    w_detached = w.detach()
+    original_shape = w.shape
+
+    # Reshape into blocks.
+    blocks = w_detached.reshape(-1, block)
+
+    # Compute one scale per block, avoiding division by zero.
+    amax = blocks.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
+    scale = amax / 448.0
+
+    # Quantize normalized weights and restore their original scale.
+    quantized = fp8_e4m3_quantize(blocks / scale) * scale
+    quantized = quantized.reshape(original_shape)
+
+    # Straight-through estimator: quantized forward values,
+    # identity gradient with respect to the original weights.
+    return w + (quantized - w).detach()
+
