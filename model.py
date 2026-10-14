@@ -1032,3 +1032,43 @@ class TinyV4Decoder(nn.Module):
         h = self.final_norm(collapse_residual(x))
         return h, infos
 
+# Step 25 - synthetic_tokens
+def synthetic_tokens(vocab, n_seq, seq_len, seed, branching=4):
+    g = torch.Generator().manual_seed(seed)
+
+    succ = torch.randint(
+        0, vocab, (vocab, branching), generator=g
+    )
+
+    tokens = torch.empty((n_seq, seq_len), dtype=torch.long)
+    if seq_len == 0:
+        return tokens
+
+    tokens[:, 0] = torch.randint(
+        0, vocab, (n_seq,), generator=g
+    )
+
+    for t in range(1, seq_len):
+        choice = torch.randint(
+            0, branching, (n_seq,), generator=g
+        )
+        tokens[:, t] = succ[tokens[:, t - 1], choice]
+
+    return tokens
+
+
+def count_loss_spikes(losses, window=20, factor=1.5):
+    if window <= 0:
+        raise ValueError("window must be positive")
+
+    spike_count = 0
+
+    for i in range(window, len(losses)):
+        previous = sorted(losses[i - window:i])
+        median = previous[window // 2]
+
+        if losses[i] > factor * median:
+            spike_count += 1
+
+    return int(spike_count)
+

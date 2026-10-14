@@ -34,6 +34,7 @@ python scaffold.py
 - [x] **22.** mtp_loss
 - [x] **23.** CausalAttention
 - [x] **24.** TinyV4Decoder
+- [x] **25.** synthetic_tokens
 
 ---
 
