@@ -27,6 +27,7 @@ python scaffold.py
 - [x] **15.** clamped_swiglu
 - [x] **16.** MoELayer
 - [x] **17.** anticipatory_routing_plan
+- [x] **18.** fp4_e2m1_quantize
 
 ---
 
