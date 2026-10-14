@@ -473,3 +473,30 @@ def optimizer_step(
         "adamw_rms": float(adamw_rms)
     }
 
+# Step 12 - route_tokens
+def route_tokens(scores, bias, k):
+    # Add the per-expert balancing bias to the routing scores.
+    adjusted_scores = scores + bias
+
+    # Stable descending sort ensures that ties preserve the original
+    # expert order, so the lower expert index wins.
+    _, sorted_indices = torch.sort(
+        adjusted_scores,
+        dim=-1,
+        descending=True,
+        stable=True
+    )
+
+    # Select the top-k experts for each token.
+    indices = sorted_indices[:, :k].long()
+
+    # Gather the ORIGINAL affinities, without the balancing bias.
+    selected_scores = torch.gather(scores, dim=-1, index=indices)
+
+    # Normalize the selected affinities to obtain routing gates.
+    gates = selected_scores / (
+        selected_scores.sum(dim=-1, keepdim=True) + 1e-9
+    )
+
+    return indices, gates
+
