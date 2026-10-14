@@ -20,6 +20,7 @@ python scaffold.py
 - [x] **8.** hybrid_newton_schulz
 - [x] **9.** muon_update
 - [x] **10.** split_parameters
+- [x] **11.** optimizer_step
 
 ---
 

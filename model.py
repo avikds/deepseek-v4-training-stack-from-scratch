@@ -366,3 +366,110 @@ def split_parameters(
 
     return muon, adamw
 
+# Step 11 - optimizer_step
+def optimizer_step(
+    muon_params,
+    adamw_params,
+    state,
+    lr,
+    mu=0.95,
+    wd=0.1,
+    gamma=0.18,
+    betas=(0.9, 0.95),
+    eps=1e-20
+):
+    # Increment the global optimization step (initialized at zero).
+    state["t"] = state.get("t", 0) + 1
+    t = state["t"]
+
+    b1, b2 = betas
+
+    muon_rms_values = []
+    adamw_rms_values = []
+
+    with torch.no_grad():
+        # --------------------------------------------------
+        # 1. Muon update for eligible matrix parameters
+        # --------------------------------------------------
+        for name, p in muon_params:
+            # Skip parameters without a gradient.
+            if p.grad is None:
+                continue
+
+            # Initialize the momentum buffer on first use.
+            key = "muon_" + name
+            if key not in state:
+                state[key] = torch.zeros_like(p)
+
+            buf = state[key]
+
+            # Compute the orthogonalized Nesterov momentum update.
+            O = muon_update(p.grad, buf, mu=mu, gamma=gamma)
+
+            # Apply decoupled weight decay and the Muon update:
+            # p <- p * (1 - lr * wd) - lr * O
+            p.mul_(1.0 - lr * wd)
+            p.add_(O, alpha=-lr)
+
+            # Record the RMS of this parameter's Muon update.
+            update_rms = torch.sqrt(torch.mean(O ** 2))
+            muon_rms_values.append(update_rms.item())
+
+        # --------------------------------------------------
+        # 2. AdamW update for remaining parameters
+        # --------------------------------------------------
+        for name, p in adamw_params:
+            # Skip parameters without a gradient.
+            if p.grad is None:
+                continue
+
+            g = p.grad
+
+            # Initialize first- and second-moment buffers.
+            m_key = "adam_m_" + name
+            v_key = "adam_v_" + name
+
+            if m_key not in state:
+                state[m_key] = torch.zeros_like(p)
+            if v_key not in state:
+                state[v_key] = torch.zeros_like(p)
+
+            m = state[m_key]
+            v = state[v_key]
+
+            # Update the exponential moving averages.
+            m.mul_(b1).add_(g, alpha=1.0 - b1)
+            v.mul_(b2).addcmul_(g, g, value=1.0 - b2)
+
+            # Apply bias correction.
+            m_hat = m / (1.0 - b1 ** t)
+            v_hat = v / (1.0 - b2 ** t)
+
+            # Compute the AdamW adaptive update.
+            adaptive_update = m_hat / (torch.sqrt(v_hat) + eps)
+
+            # Apply decoupled weight decay and the AdamW update.
+            p.mul_(1.0 - lr * wd)
+            p.add_(adaptive_update, alpha=-lr)
+
+            # Record the RMS of this parameter's adaptive update.
+            update_rms = torch.sqrt(torch.mean(adaptive_update ** 2))
+            adamw_rms_values.append(update_rms.item())
+
+    # Average the per-parameter RMS values.
+    # Empty groups return 0.0.
+    muon_rms = (
+        sum(muon_rms_values) / len(muon_rms_values)
+        if muon_rms_values else 0.0
+    )
+
+    adamw_rms = (
+        sum(adamw_rms_values) / len(adamw_rms_values)
+        if adamw_rms_values else 0.0
+    )
+
+    return {
+        "muon_rms": float(muon_rms),
+        "adamw_rms": float(adamw_rms)
+    }
+
