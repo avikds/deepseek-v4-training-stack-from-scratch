@@ -16,6 +16,7 @@ python scaffold.py
 - [x] **4.** sinkhorn_knopp
 - [x] **5.** MHCBlock
 - [x] **6.** signal_norm_across_depth
+- [x] **7.** newton_schulz_step
 
 ---
 

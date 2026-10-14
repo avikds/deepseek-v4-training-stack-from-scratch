@@ -266,3 +266,18 @@ def signal_norm_across_depth(
         "spec": spec_history
     }
 
+# Step 7 - newton_schulz_step
+def newton_schulz_step(M, a, b, c):
+    # Compute A = M @ M^T, transposing only the last two dimensions.
+    A = M @ M.transpose(-2, -1)
+
+    # Compute the matrix square A^2.
+    A_squared = A @ A
+
+    # Apply one Newton-Schulz iteration.
+    return (
+        a * M
+        + b * (A @ M)
+        + c * (A_squared @ M)
+    )
+
