@@ -26,6 +26,7 @@ python scaffold.py
 - [x] **14.** hash_route
 - [x] **15.** clamped_swiglu
 - [x] **16.** MoELayer
+- [x] **17.** anticipatory_routing_plan
 
 ---
 

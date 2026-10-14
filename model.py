@@ -734,3 +734,53 @@ class MoELayer(nn.Module):
 
         return y, info
 
+# Step 17 - anticipatory_routing_plan
+def anticipatory_routing_plan(model_hist, tokens):
+    # Run the historical model without tracking gradients.
+    with torch.no_grad():
+        _, infos = model_hist(tokens)
+
+        # Extract routing indices in MoE layer order.
+        plan = [info["indices"].detach() for info in infos]
+
+    return plan
+
+
+def routing_agreement(plan_a, plan_b):
+    # Both plans must have the same number of layers.
+    if len(plan_a) != len(plan_b):
+        raise ValueError(
+            "Both routing plans must contain the same number of layers."
+        )
+
+    matching_entries = 0
+    total_entries = 0
+
+    # Compare routing assignments across all layers.
+    for indices_a, indices_b in zip(plan_a, plan_b):
+        if indices_a.shape != indices_b.shape:
+            raise ValueError(
+                "Routing index tensors must have matching shapes."
+            )
+
+        # Sort expert indices so slot order does not affect agreement.
+        sorted_a = torch.sort(indices_a, dim=-1).values
+        sorted_b = torch.sort(
+            indices_b.to(device=sorted_a.device), dim=-1
+        ).values
+
+        matching_entries += (sorted_a == sorted_b).sum().item()
+        total_entries += sorted_a.numel()
+
+    # Handle empty routing plans.
+    if total_entries == 0:
+        return 0.0
+
+    # Return the agreement using float32 precision, as expected by the tests.
+    agreement = torch.tensor(
+        matching_entries / total_entries,
+        dtype=torch.float32
+    )
+
+    return float(agreement.item())
+
