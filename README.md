@@ -19,6 +19,7 @@ python scaffold.py
 - [x] **7.** newton_schulz_step
 - [x] **8.** hybrid_newton_schulz
 - [x] **9.** muon_update
+- [x] **10.** split_parameters
 
 ---
 

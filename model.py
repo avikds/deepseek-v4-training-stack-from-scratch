@@ -333,3 +333,36 @@ def muon_update(grad, buf, mu=0.95, gamma=0.18):
 
     return O
 
+# Step 10 - split_parameters
+def split_parameters(
+    model,
+    adamw_keywords=("embed", "head", "norm", "static", "alpha", "bias")
+):
+    muon = []
+    adamw = []
+
+    # Normalize keywords for case-insensitive name matching.
+    keywords = tuple(keyword.lower() for keyword in adamw_keywords)
+
+    # Preserve the order returned by model.named_parameters().
+    for name, param in model.named_parameters():
+
+        # Ignore frozen parameters.
+        if not param.requires_grad:
+            continue
+
+        # Low-dimensional parameters and parameters whose names match
+        # the specified keywords are assigned to AdamW.
+        name_lower = name.lower()
+        use_adamw = (
+            param.ndim < 2
+            or any(keyword in name_lower for keyword in keywords)
+        )
+
+        if use_adamw:
+            adamw.append((name, param))
+        else:
+            muon.append((name, param))
+
+    return muon, adamw
+
