@@ -561,3 +561,16 @@ def hash_route(token_ids, n_experts, k):
 
     return indices.long()
 
+# Step 15 - clamped_swiglu
+import torch.nn.functional as F
+
+def clamped_swiglu(x, w_gate, w_up, w_down, limit=10.0):
+    # Compute the gate projection, applying an upper-bound clamp only.
+    gate = torch.clamp(x @ w_gate, max=limit)
+
+    # Compute the up projection, clamping both lower and upper bounds.
+    lin = torch.clamp(x @ w_up, min=-limit, max=limit)
+
+    # Apply SwiGLU: silu(gate) * linear projection, then down-project.
+    return (F.silu(gate) * lin) @ w_down
+
