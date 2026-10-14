@@ -806,3 +806,34 @@ def fp4_e2m1_quantize(x):
     # Restore the original signs and preserve the input dtype.
     return torch.sign(x) * quantized_magnitude
 
+# Step 19 - mxfp4_fake_quant
+def mxfp4_fake_quant(w, block=32):
+    # Perform all scale and quantization calculations on detached weights.
+    w_detached = w.detach()
+    original_shape = w.shape
+
+    # Reshape into blocks of the specified size.
+    blocks = w_detached.reshape(-1, block)
+
+    # Find each block's maximum absolute value.
+    amax = blocks.abs().amax(dim=-1, keepdim=True)
+    amax = amax.clamp(min=1e-12)
+
+    # Compute the shared power-of-two scale:
+    # scale = 2 ** (floor(log2(amax)) - 2)
+    scale = torch.pow(
+        2.0,
+        torch.floor(torch.log2(amax)) - 2.0
+    )
+
+    # Quantize normalized weights to the FP4 E2M1 grid,
+    # then rescale them to the original magnitude range.
+    quantized = fp4_e2m1_quantize(blocks / scale) * scale
+
+    # Restore the original tensor shape.
+    quantized = quantized.reshape(original_shape)
+
+    # Straight-through estimator: quantized forward values,
+    # identity gradient with respect to the original weights.
+    return w + (quantized - w).detach()
+
