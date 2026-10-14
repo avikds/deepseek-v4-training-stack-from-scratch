@@ -313,3 +313,23 @@ def hybrid_newton_schulz(M, fast_steps=8, stable_steps=2, eps=1e-7):
 
     return X
 
+# Step 9 - muon_update
+def muon_update(grad, buf, mu=0.95, gamma=0.18):
+    # Get the matrix dimensions from the last two axes.
+    n, m = grad.shape[-2:]
+
+    # Update the momentum buffer in place:
+    # M_t = mu * M_{t-1} + grad
+    with torch.no_grad():
+        buf.mul_(mu).add_(grad)
+
+    # Compute the Nesterov-corrected direction:
+    # O' = hybrid_newton_schulz(mu * M_t + grad)
+    nesterov_grad = mu * buf + grad
+    O = hybrid_newton_schulz(nesterov_grad)
+
+    # Rescale the orthogonalized matrix so its RMS is approximately gamma.
+    O = O * (math.sqrt(max(n, m)) * gamma)
+
+    return O
+

@@ -18,6 +18,7 @@ python scaffold.py
 - [x] **6.** signal_norm_across_depth
 - [x] **7.** newton_schulz_step
 - [x] **8.** hybrid_newton_schulz
+- [x] **9.** muon_update
 
 ---
 
