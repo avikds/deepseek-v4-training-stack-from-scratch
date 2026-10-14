@@ -31,6 +31,7 @@ python scaffold.py
 - [x] **19.** mxfp4_fake_quant
 - [x] **20.** fp8_fake_quant
 - [x] **21.** MTPModule
+- [x] **22.** mtp_loss
 
 ---
 

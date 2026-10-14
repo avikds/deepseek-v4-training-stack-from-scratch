@@ -902,3 +902,16 @@ class MTPModule(nn.Module):
 
         return result
 
+# Step 22 - mtp_loss
+def mtp_loss(h_mtp, head, tokens, weight=0.3):
+    logits = head(h_mtp)
+    targets = tokens[:, 2:]
+
+    vocab = logits.shape[-1]
+    loss = F.cross_entropy(
+        logits.reshape(-1, vocab),
+        targets.reshape(-1)
+    )
+
+    return weight * loss
+
