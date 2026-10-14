@@ -11,6 +11,7 @@ python scaffold.py
 ## Steps
 
 - [x] **1.** RMSNorm
+- [x] **2.** expand_residual
 
 ---
 
