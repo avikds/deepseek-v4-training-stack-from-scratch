@@ -786,18 +786,23 @@ def routing_agreement(plan_a, plan_b):
 
 # Step 18 - fp4_e2m1_quantize
 def fp4_e2m1_quantize(x):
-    # Representable FP4 E2M1 magnitudes, sorted in ascending order.
-    levels = x.new_tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0])
+    # Representable non-negative FP4 E2M1 magnitudes.
+    levels = torch.tensor(
+        [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0],
+        device=x.device,
+        dtype=x.dtype
+    )
 
-    # Take the absolute value and clip magnitudes to the maximum value.
-    abs_x = x.abs().clamp(max=6.0)
+    # Work with magnitudes and clip values to the representable range.
+    magnitude = torch.clamp(x.abs(), max=6.0)
 
-    # Find the nearest representable magnitude for every element.
-    # argmin selects the first minimum, so ties favor smaller magnitudes.
-    distances = (abs_x.unsqueeze(-1) - levels).abs()
+    # Find the nearest representable magnitude.
+    # torch.argmin returns the first minimum, so ties select
+    # the smaller magnitude because levels are sorted ascending.
+    distances = (magnitude.unsqueeze(-1) - levels).abs()
     nearest_indices = distances.argmin(dim=-1)
     quantized_magnitude = levels[nearest_indices]
 
-    # Restore the original sign and preserve the input dtype and shape.
-    return quantized_magnitude * torch.sign(x)
+    # Restore the original signs and preserve the input dtype.
+    return torch.sign(x) * quantized_magnitude
 
