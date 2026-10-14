@@ -1072,3 +1072,206 @@ def count_loss_spikes(losses, window=20, factor=1.5):
 
     return int(spike_count)
 
+# Step 26 - train_tiny_v4
+import copy
+
+def fake_quant_params(model):
+    # Return a parameter-name -> tensor mapping for functional_call.
+    quantized_params = {}
+
+    for name, param in model.named_parameters():
+        # Routed expert weights use MXFP4 fake quantization.
+        if any(key in name for key in ("w_gate", "w_up", "w_down")):
+            quantized_params[name] = mxfp4_fake_quant(param)
+
+        # Other eligible 2-D weights use FP8 E4M3 fake quantization.
+        elif (
+            param.ndim == 2
+            and param.numel() % 128 == 0
+            and not any(
+                key in name
+                for key in ("embed", "head", "centroids", "static")
+            )
+        ):
+            quantized_params[name] = fp8_fake_quant(param)
+
+        # Leave all remaining parameters unchanged.
+        else:
+            quantized_params[name] = param
+
+    return quantized_params
+
+
+def train_tiny_v4(
+    cfg,
+    data,
+    n_steps,
+    lr,
+    seed,
+    batch=16,
+    delay=0,
+    bias_balance=True,
+    bias_speed=0.001,
+    qat=False,
+    model=None
+):
+    # Seed model initialization and other global PyTorch randomness.
+    torch.manual_seed(seed)
+
+    # Construct the model unless an existing model was supplied.
+    if model is None:
+        model = TinyV4Decoder(cfg)
+
+    model.train()
+
+    # Keep a historical model for anticipatory routing when requested.
+    hist = copy.deepcopy(model) if delay > 0 else None
+
+    # Split trainable parameters into Muon and AdamW groups.
+    muon, adamw = split_parameters(model)
+
+    # Optimizer state and an independently seeded batch sampler.
+    state = {}
+    g = torch.Generator().manual_seed(seed)
+
+    losses = []
+    muon_rms = []
+    adamw_rms = []
+    agreement = []
+    loads = []
+
+    # MoE layers are stored at odd positions in the decoder's block list.
+    moe_layers = [
+        block.layer
+        for i, block in enumerate(model.blocks)
+        if i % 2 == 1
+    ]
+
+    for step in range(n_steps):
+        # Sample a batch of sequences, allowing repeated rows.
+        row_indices = torch.randint(
+            0, len(data), (batch,), generator=g
+        )
+        tokens = data[row_indices.to(data.device)]
+
+        # Refresh the historical model at the requested interval.
+        if delay > 0:
+            if step % delay == 0:
+                hist.load_state_dict(model.state_dict())
+
+            # Compute expert assignments using historical parameters.
+            plan = anticipatory_routing_plan(hist, tokens)
+        else:
+            plan = None
+
+        # Forward pass, optionally using fake-quantized parameters.
+        if qat:
+            h, infos = torch.func.functional_call(
+                model,
+                fake_quant_params(model),
+                (tokens,),
+                {"routing_plan": plan}
+            )
+        else:
+            h, infos = model(tokens, routing_plan=plan)
+
+        # Main next-token prediction loss.
+        logits = model.head(h[:, :-1, :])
+        vocab = logits.shape[-1]
+
+        loss = F.cross_entropy(
+            logits.reshape(-1, vocab),
+            tokens[:, 1:].reshape(-1)
+        )
+
+        # Include the multi-token prediction auxiliary objective.
+        total = loss
+        if model.mtp is not None:
+            h_mtp = model.mtp(h, tokens, model.embed)
+            total = total + mtp_loss(
+                h_mtp, model.head, tokens, weight=0.3
+            )
+
+        # Add the slight sequence-wise balance loss for each MoE layer.
+        for info in infos:
+            total = total + 1e-4 * sequence_balance_loss(
+                info["scores"],
+                info["indices"],
+                cfg["k"]
+            )
+
+        # Backpropagate the combined objective.
+        model.zero_grad()
+        total.backward()
+
+        # Apply one combined Muon and AdamW optimizer step.
+        stats = optimizer_step(
+            muon,
+            adamw,
+            state,
+            lr
+        )
+
+        # Record the primary next-token loss and update diagnostics.
+        losses.append(float(loss.detach()))
+        muon_rms.append(stats["muon_rms"])
+        adamw_rms.append(stats["adamw_rms"])
+
+        # Record this step's per-layer expert loads.
+        loads = [
+            info["load"].tolist()
+            for info in infos
+        ]
+
+        # Compare historical routing with current learned routing.
+        if delay > 0:
+            historical_learned = []
+            current_learned = []
+
+            for j, (layer, info) in enumerate(zip(moe_layers, infos)):
+                # Hash-routed layers do not use learned top-k routing.
+                if layer.hash_routing:
+                    continue
+
+                historical_learned.append(plan[j])
+
+                # These are the choices current parameters would make,
+                # using scores from the same forward pass.
+                current_indices, _ = route_tokens(
+                    info["scores"],
+                    layer.bias,
+                    cfg["k"]
+                )
+                current_learned.append(current_indices)
+
+            agreement.append(
+                routing_agreement(
+                    historical_learned,
+                    current_learned
+                )
+            )
+
+        # Update auxiliary-loss-free routing biases after the step.
+        with torch.no_grad():
+            if bias_balance:
+                for layer, info in zip(moe_layers, infos):
+                    if not layer.hash_routing:
+                        layer.bias.copy_(
+                            update_routing_bias(
+                                layer.bias,
+                                info["indices"],
+                                cfg["n_experts"],
+                                bias_speed
+                            )
+                        )
+
+    return {
+        "model": model,
+        "losses": losses,
+        "spikes": count_loss_spikes(losses),
+        "muon_rms": muon_rms,
+        "adamw_rms": adamw_rms,
+        "loads": loads,
+        "agreement": agreement
+    }
+

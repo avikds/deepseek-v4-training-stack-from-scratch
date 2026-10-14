@@ -35,6 +35,7 @@ python scaffold.py
 - [x] **23.** CausalAttention
 - [x] **24.** TinyV4Decoder
 - [x] **25.** synthetic_tokens
+- [x] **26.** train_tiny_v4
 
 ---
 
