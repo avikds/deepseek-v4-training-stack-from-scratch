@@ -915,3 +915,38 @@ def mtp_loss(h_mtp, head, tokens, weight=0.3):
 
     return weight * loss
 
+# Step 23 - CausalAttention
+class CausalAttention(nn.Module):
+    def __init__(self, d_model, n_heads):
+        super().__init__()
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+
+        self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
+        self.out = nn.Linear(d_model, d_model, bias=False)
+        self.q_norm = RMSNorm(self.d_head)
+        self.k_norm = RMSNorm(self.d_head)
+
+    def forward(self, x):
+        batch, T, d_model = x.shape
+
+        q, k, v = self.qkv(x).chunk(3, dim=-1)
+
+        def split_heads(t):
+            return t.reshape(
+                batch, T, self.n_heads, self.d_head
+            ).transpose(1, 2)
+
+        q = self.q_norm(split_heads(q))
+        k = self.k_norm(split_heads(k))
+        v = split_heads(v)
+
+        attn_out = F.scaled_dot_product_attention(
+            q, k, v, is_causal=True
+        )
+
+        merged = attn_out.transpose(1, 2).contiguous().reshape(
+            batch, T, d_model
+        )
+        return self.out(merged)
+
