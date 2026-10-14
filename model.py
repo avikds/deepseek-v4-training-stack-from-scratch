@@ -108,3 +108,18 @@ class HCParamGenerator(nn.Module):
 
         return a_raw, b_raw, c_raw
 
+# Step 4 - sinkhorn_knopp
+def sinkhorn_knopp(b_raw, n_iter=20):
+    # Convert raw residual-map logits into positive values.
+    M = torch.exp(b_raw)
+
+    # Alternately normalize columns and rows.
+    for _ in range(n_iter):
+        # Column normalization: each column sums to 1.
+        M = M / M.sum(dim=-2, keepdim=True)
+
+        # Row normalization: each row sums to 1.
+        M = M / M.sum(dim=-1, keepdim=True)
+
+    return M
+
