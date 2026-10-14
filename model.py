@@ -123,3 +123,81 @@ def sinkhorn_knopp(b_raw, n_iter=20):
 
     return M
 
+# Step 5 - MHCBlock
+class MHCBlock(nn.Module):
+    def __init__(
+        self,
+        d_model,
+        n_hc,
+        layer,
+        constrained=True,
+        sinkhorn_iters=20
+    ):
+        super().__init__()
+
+        # The layer wrapped by the hyper-connection block.
+        self.layer = layer
+
+        # Generates dynamic input, residual, and output mappings.
+        self.gen = HCParamGenerator(d_model, n_hc)
+
+        self.constrained = constrained
+        self.sinkhorn_iters = sinkhorn_iters
+
+    def mappings(self, X):
+        # Generate the raw hyper-connection mappings.
+        a_raw, b_raw, c_raw = self.gen(X)
+
+        if self.constrained:
+            # Constrain input mixing coefficients to (0, 1).
+            A = torch.sigmoid(a_raw)
+
+            # Project residual mixing matrices onto the
+            # doubly stochastic manifold.
+            B = sinkhorn_knopp(b_raw, self.sinkhorn_iters)
+
+            # Constrain output mixing coefficients to (0, 2).
+            C = 2.0 * torch.sigmoid(c_raw)
+
+            return A, B, C
+
+        # Unconstrained hyper-connections use the raw mappings.
+        return a_raw, b_raw, c_raw
+
+    def forward(self, X, **kwargs):
+        # X has shape (..., n_hc, d_model).
+        A, B, C = self.mappings(X)
+
+        # Mix the residual streams to construct the layer input.
+        # A: (..., n_hc)
+        # X: (..., n_hc, d_model)
+        # h: (..., d_model)
+        h = (A.unsqueeze(-1) * X).sum(dim=-2)
+
+        # Apply the wrapped layer, forwarding any keyword arguments.
+        result = self.layer(h, **kwargs)
+
+        # Support layers that return either a tensor or (out, extra).
+        if isinstance(result, tuple):
+            out, extra = result
+        else:
+            out = result
+            extra = None
+
+        # Mix the existing residual streams using B.
+        # B: (..., n_hc, n_hc)
+        # X: (..., n_hc, d_model)
+        residual = B @ X
+
+        # Inject the layer output into every residual stream,
+        # scaled by its corresponding output coefficient.
+        # C.unsqueeze(-1): (..., n_hc, 1)
+        # out.unsqueeze(-2): (..., 1, d_model)
+        X_next = residual + C.unsqueeze(-1) * out.unsqueeze(-2)
+
+        # Preserve the auxiliary output when the layer returns a tuple.
+        if extra is not None:
+            return X_next, extra
+
+        return X_next
+

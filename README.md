@@ -14,6 +14,7 @@ python scaffold.py
 - [x] **2.** expand_residual
 - [x] **3.** HCParamGenerator
 - [x] **4.** sinkhorn_knopp
+- [x] **5.** MHCBlock
 
 ---
 
