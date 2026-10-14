@@ -25,6 +25,7 @@ python scaffold.py
 - [x] **13.** update_routing_bias
 - [x] **14.** hash_route
 - [x] **15.** clamped_swiglu
+- [x] **16.** MoELayer
 
 ---
 

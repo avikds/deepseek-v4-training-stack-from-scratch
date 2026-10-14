@@ -574,3 +574,163 @@ def clamped_swiglu(x, w_gate, w_up, w_down, limit=10.0):
     # Apply SwiGLU: silu(gate) * linear projection, then down-project.
     return (F.silu(gate) * lin) @ w_down
 
+# Step 16 - MoELayer
+class MoELayer(nn.Module):
+    def __init__(
+        self,
+        d_model,
+        d_ff,
+        n_experts,
+        k,
+        n_shared=1,
+        hash_routing=False,
+        clamp=True
+    ):
+        super().__init__()
+
+        self.n_experts = n_experts
+        self.k = k
+        self.hash_routing = hash_routing
+        self.clamp = clamp
+
+        # Scaling factors for parameter initialization.
+        model_scale = math.sqrt(d_model)
+        ff_scale = math.sqrt(d_ff)
+        shared_ff_dim = n_shared * d_ff
+        shared_scale = math.sqrt(shared_ff_dim)
+
+        # Routed expert parameters.
+        # Initialize in the exact order specified by the task.
+        self.w_gate = nn.Parameter(
+            torch.randn(n_experts, d_model, d_ff) / model_scale
+        )
+        self.w_up = nn.Parameter(
+            torch.randn(n_experts, d_model, d_ff) / model_scale
+        )
+        self.w_down = nn.Parameter(
+            torch.randn(n_experts, d_ff, d_model) / ff_scale
+        )
+
+        # Shared expert parameters.
+        self.shared_gate = nn.Parameter(
+            torch.randn(d_model, shared_ff_dim) / model_scale
+        )
+        self.shared_up = nn.Parameter(
+            torch.randn(d_model, shared_ff_dim) / model_scale
+        )
+        self.shared_down = nn.Parameter(
+            torch.randn(shared_ff_dim, d_model) / shared_scale
+        )
+
+        # Routing centroids used to calculate token-expert affinities.
+        self.centroids = nn.Parameter(
+            torch.randn(n_experts, d_model) / model_scale
+        )
+
+        # Auxiliary-loss-free load-balancing bias.
+        self.register_buffer("bias", torch.zeros(n_experts))
+
+    def affinity(self, x):
+        # Compute non-negative token-to-expert affinities:
+        # scores = sqrt(softplus(x @ centroids.T))
+        logits = x @ self.centroids.transpose(-2, -1)
+        return torch.sqrt(F.softplus(logits))
+
+    def forward(self, x, token_ids=None, indices=None):
+        # Save the original shape and flatten all token dimensions.
+        original_shape = x.shape
+        x_flat = x.reshape(-1, original_shape[-1])
+
+        # Calculate routing affinities for every flattened token.
+        scores = self.affinity(x_flat)
+
+        # Obtain routing indices from supplied indices, hash routing,
+        # or affinity-based top-k routing, in that priority order.
+        if indices is None:
+            if self.hash_routing:
+                if token_ids is None:
+                    raise ValueError(
+                        "token_ids must be provided when hash_routing=True"
+                    )
+
+                token_ids = token_ids.reshape(-1).to(
+                    device=x_flat.device, dtype=torch.long
+                )
+                indices = hash_route(
+                    token_ids, self.n_experts, self.k
+                )
+            else:
+                indices, _ = route_tokens(
+                    scores, self.bias, self.k
+                )
+
+        # Support supplied indices with either flattened or leading
+        # token dimensions. Keep indices compatible with the input device.
+        indices = indices.reshape(-1, self.k).to(
+            device=x_flat.device, dtype=torch.long
+        )
+
+        # Routing gates always use the ORIGINAL affinities, irrespective
+        # of whether the indices came from hashing or were supplied.
+        selected_scores = torch.gather(
+            scores, dim=-1, index=indices
+        )
+        gates = selected_scores / (
+            selected_scores.sum(dim=-1, keepdim=True) + 1e-9
+        )
+
+        # Apply SwiGLU clamping when enabled.
+        limit = 10.0 if self.clamp else float("inf")
+
+        # Every token receives the shared expert's output.
+        y = clamped_swiglu(
+            x_flat,
+            self.shared_gate,
+            self.shared_up,
+            self.shared_down,
+            limit=limit
+        )
+
+        # Add weighted outputs from the selected routed experts.
+        for e in range(self.n_experts):
+            # Identify token rows and routing slots assigned to expert e.
+            rows, slot = (indices == e).nonzero(as_tuple=True)
+
+            # Skip experts that received no tokens.
+            if rows.numel() == 0:
+                continue
+
+            # Compute this expert's output for its assigned tokens.
+            expert_out = clamped_swiglu(
+                x_flat[rows],
+                self.w_gate[e],
+                self.w_up[e],
+                self.w_down[e],
+                limit=limit
+            )
+
+            # Weight expert outputs by their routing gates.
+            weighted_out = (
+                gates[rows, slot].unsqueeze(-1) * expert_out
+            )
+
+            # Accumulate routed expert outputs into the token rows.
+            y = y.index_add(0, rows, weighted_out)
+
+        # Count all top-k expert assignments.
+        load = torch.bincount(
+            indices.reshape(-1),
+            minlength=self.n_experts
+        )
+
+        # Return the output in its original shape and routing diagnostics.
+        y = y.reshape(original_shape)
+
+        info = {
+            "indices": indices,
+            "scores": scores,
+            "load": load
+        }
+
+        return y, info
+
