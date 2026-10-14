@@ -22,6 +22,7 @@ python scaffold.py
 - [x] **10.** split_parameters
 - [x] **11.** optimizer_step
 - [x] **12.** route_tokens
+- [x] **13.** update_routing_bias
 
 ---
 

@@ -500,3 +500,53 @@ def route_tokens(scores, bias, k):
 
     return indices, gates
 
+# Step 13 - update_routing_bias
+def update_routing_bias(bias, indices, n_experts, speed=0.001):
+    # Count how often each expert was selected.
+    # Flatten indices to support tensors of any shape.
+    flat_indices = indices.reshape(-1).to(
+        device=bias.device, dtype=torch.long
+    )
+    counts = torch.bincount(
+        flat_indices, minlength=n_experts
+    ).to(dtype=bias.dtype)
+
+    # Compare each expert's load with the mean expert load.
+    mean_count = counts.mean()
+
+    # Overloaded experts lose bias; underloaded experts gain bias.
+    # Exactly balanced experts retain their current bias.
+    new_bias = bias - speed * torch.sign(counts - mean_count)
+
+    return new_bias
+
+
+def sequence_balance_loss(scores, indices, k):
+    # scores shape: (n_tokens, n_experts)
+    # indices shape: (n_tokens, k)
+    n_tokens, n_experts = scores.shape
+
+    # Count the number of times each expert was selected.
+    flat_indices = indices.reshape(-1).to(
+        device=scores.device, dtype=torch.long
+    )
+    counts = torch.bincount(
+        flat_indices, minlength=n_experts
+    ).to(dtype=scores.dtype)
+
+    # Compute the normalized expert-selection frequency:
+    # f_i = n_experts / (k * n_tokens) * count_i
+    f = counts * (n_experts / (k * n_tokens))
+
+    # Normalize the original affinities across experts for each token.
+    # The small epsilon prevents division by zero.
+    normalized_scores = scores / (
+        scores.sum(dim=-1, keepdim=True) + 1e-9
+    )
+
+    # Mean normalized affinity assigned to each expert.
+    P = normalized_scores.mean(dim=0)
+
+    # Sequence-wise balance loss: sum_i f_i * P_i.
+    return torch.sum(f * P)
+
