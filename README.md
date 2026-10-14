@@ -12,6 +12,7 @@ python scaffold.py
 
 - [x] **1.** RMSNorm
 - [x] **2.** expand_residual
+- [x] **3.** HCParamGenerator
 
 ---
 
