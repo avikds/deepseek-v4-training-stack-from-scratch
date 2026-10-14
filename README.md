@@ -17,6 +17,7 @@ python scaffold.py
 - [x] **5.** MHCBlock
 - [x] **6.** signal_norm_across_depth
 - [x] **7.** newton_schulz_step
+- [x] **8.** hybrid_newton_schulz
 
 ---
 

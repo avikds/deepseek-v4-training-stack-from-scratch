@@ -281,3 +281,35 @@ def newton_schulz_step(M, a, b, c):
         + c * (A_squared @ M)
     )
 
+# Step 8 - hybrid_newton_schulz
+def hybrid_newton_schulz(M, fast_steps=8, stable_steps=2, eps=1e-7):
+    # Work on the transpose of tall matrices so the Gram matrix
+    # is formed using the smaller matrix dimension.
+    transposed = M.shape[-2] > M.shape[-1]
+    X = M.transpose(-2, -1) if transposed else M
+
+    # Normalize each matrix by its Frobenius norm.
+    # keepdim=True preserves the matrix dimensions for broadcasting.
+    fro_norm = torch.linalg.matrix_norm(
+        X, ord="fro", dim=(-2, -1), keepdim=True
+    )
+    X = X / (fro_norm + eps)
+
+    # Fast Newton-Schulz iterations.
+    for _ in range(fast_steps):
+        X = newton_schulz_step(
+            X, 3.4445, -4.7750, 2.0315
+        )
+
+    # Numerically stabilizing Newton-Schulz iterations.
+    for _ in range(stable_steps):
+        X = newton_schulz_step(
+            X, 2.0, -1.5, 0.5
+        )
+
+    # Restore the original matrix orientation, if necessary.
+    if transposed:
+        X = X.transpose(-2, -1)
+
+    return X
+
